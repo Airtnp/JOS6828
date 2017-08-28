@@ -21,6 +21,7 @@ start:
   movw    %ax,%es             # -> Extra Segment
   movw    %ax,%ss             # -> Stack Segment
 
+  # Stackoverflow ref: https://stackoverflow.com/questions/21078932/why-test-port-0x64-in-a-bootloader-before-switching-into-protected-mode
   # Enable A20:
   #   For backwards compatibility with the earliest PCs, physical
   #   address line 20 is tied low, so that addresses higher than
