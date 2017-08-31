@@ -10,6 +10,7 @@
 #include <kern/console.h>
 #include <kern/monitor.h>
 #include <kern/kdebug.h>
+#include <kern/pmap.h>
 
 #define CMDBUF_SIZE	80	// enough for one VGA text line
 
@@ -24,6 +25,9 @@ struct Command {
 static struct Command commands[] = {
 	{ "help", "Display this list of commands", mon_help },
 	{ "kerninfo", "Display information about the kernel", mon_kerninfo },
+	{ "backtrace", "Display backtrack of the call", mon_backtrace },
+	{ "showmappings", "Display virtual/linear to physical mapping", mon_showmapping },
+	{ "setpremission", "Set permission of page table", mon_setpermission },
 };
 
 /***** Implementations of basic kernel monitor commands *****/
@@ -54,7 +58,9 @@ mon_kerninfo(int argc, char **argv, struct Trapframe *tf)
 	return 0;
 }
 
-__attribute__((optimize("O0")) 
+#if defined(__GNUC__)
+__attribute__((optimize("O0"))
+#endif 
 int
 mon_backtrace(int argc, char **argv, struct Trapframe *tf)
 {
@@ -75,13 +81,102 @@ mon_backtrace(int argc, char **argv, struct Trapframe *tf)
 				info.eip_fn_namelen, 
 				info.eip_fn_name,
 				eip - info.eip_fn_addr);
-			);
 		}
-		ebp = *(uint32_t*)(ebp)
+		ebp = *(uint32_t*)(ebp);
 	}
 	return 0;
 }
 
+int
+mon_showmapping(int argc, char **argv, struct Trapframe *tf) 
+{
+	if (argc != 3) {
+		cprintf("Usage: showmappings BEGIN_ADDR END_ADDR\n");
+		return 0;
+	}
+	uintptr_t begin = (uintptr_t)strtol(argv[1], &ptr, 16);
+	uintptr_t end = (uintptr_t)strtol(argv[2], &ptr, 16);
+	// TODO: exceed limit
+	if ((begin < 0) | (end < 0) | (begin > end)) {
+		cprintf("Invalid address input.\n");
+	}
+	while (begin <= end) {
+		pte_t* entry = pgdir_walk(kern_pgdir, (void*)begin, 0);
+		if (!entry)
+			panic("pgdir_walk out of memory.\n");
+		if (*entry & PTE_P) {
+			int p = (*entry & PTE_P) ? 1 : 0;
+			int w = (*entry & PTE_W) ? 1 : 0;
+			int u = (*entry & PTE_U) ? 1 : 0;
+			cprintf("Virtual address: 0x%x, physical address: 0x%x\n  PTE_P: %d, PTE_W: %d, PTE_U: %d\n",
+				begin,
+				PTE_ADDR(*entry),
+				p, w, u
+			);
+		} else {
+			cprintf("0x%x: page table entry doesn't exist.\n", begin);
+		}
+		begin += PGSIZE;
+	}
+	return 0;
+}
+
+int
+mon_setpermission(int argc, char **argv, Trapframe *tf)
+{
+	if (argc != 4) {
+		cprintf("Usage: setpermission ADDR [s|c] [p|w|u]\n");
+		return 0;
+	}
+	char *ptr;
+	uintptr_t addr = (uintptr_t) strtol(argv[1], &ptr, 16);
+	char set = argv[2][0];
+	char perm = argv[3][0];
+
+	// TODO: check invalid input
+	pte_t* entry = pgdir_walk(kern_pgdir, (void*)addr, 0);
+	cprintf("Before setting:\n");
+	if (*entry & PTE_P) {
+		int p = (*entry & PTE_P) ? 1 : 0;
+		int w = (*entry & PTE_W) ? 1 : 0;
+		int u = (*entry & PTE_U) ? 1 : 0;
+		cprintf("Virtual address: 0x%x, physical address: 0x%x\n  PTE_P: %d, PTE_W: %d, PTE_U: %d\n",
+			addr,
+			PTE_ADDR(*entry),
+			p, w, u
+		);
+	} else {
+		cprintf("0x%x: page table entry doesn't exist.\n", addr);
+	}
+
+	int p = 0;
+
+	switch(perm) {
+		case 'p': p = PTE_P; break;
+		case 'w': p = PTE_W; break;
+		case 'u': p = PTE_U; break;
+		default: break;
+	}
+	switch(set) {
+		case 's': *entry = *entry | p; break;
+		case 'c': *entry = *entry & ~p; break;
+	}
+
+	cprintf("After setting:\n");
+	if (*entry & PTE_P) {
+		int p = (*entry & PTE_P) ? 1 : 0;
+		int w = (*entry & PTE_W) ? 1 : 0;
+		int u = (*entry & PTE_U) ? 1 : 0;
+		cprintf("Virtual address: 0x%x, physical address: 0x%x\n  PTE_P: %d, PTE_W: %d, PTE_U: %d\n",
+			addr,
+			PTE_ADDR(*entry),
+			p, w, u
+		);
+	} else {
+		cprintf("0x%x: page table entry doesn't exist.\n", addr);
+	}
+	return 0;
+}
 
 
 /***** Kernel monitor command interpreter *****/
